@@ -1,53 +1,96 @@
-# `datos_geograficos/`
+# datos_geograficos
 
-Carpeta de datos de entrada geoespaciales y de ejemplo que usa el backend para construir los mapas (`GET /geo/predios`). El backend la lee directamente; no requiere ningún paso de importación previo.
+Esta carpeta contiene los archivos geográficos y las plantillas de datos utilizadas por la aplicación para generar las visualizaciones espaciales de los predios.
 
-## Contenido actual
+Los datos no se distribuyen junto con el repositorio y deben ser suministrados por el usuario o la entidad responsable de la información.
 
-| Archivo/carpeta | Tamaño aprox. | Qué es |
-|---|---|---|
-| `15092_Betéitiva.gdb/` | ≈54 MB | Geodatabase de Esri (formato `.gdb`) con la geometría predial del municipio de Betéitiva (Boyacá). |
-| `Beteitiva_plantilla.xlsx` | ≈680 KB | Plantilla Excel de ejemplo con datos catastrales y de liquidación del mismo municipio, lista para usarse como demo end-to-end. |
+## Estructura esperada
 
-## Cómo la usa el backend
+```text
+datos_geograficos/
+├── <municipio>.gdb
+├── <plantilla>.xlsx
+└── ...
+```
 
-- `backend/modules/geografia.py:20-33` busca, en este orden:
-  1. La ruta exacta indicada por la variable de entorno `GEODATA_GDB_PATH`, si existe.
-  2. El primer archivo `*.gdb` encontrado dentro de la carpeta indicada por `GEODATA_DIR` (por defecto, **esta misma carpeta**, calculada como `<raíz-del-repo>/datos_geograficos` — `backend/modules/geografia.py:12`).
-- Si no encuentra ningún `.gdb`, falla con `FileNotFoundError: No se encontro una geodatabase .gdb en <ruta>` (`backend/modules/geografia.py:30-32`).
-- Lee únicamente dos capas de la geodatabase (`backend/modules/geografia.py:13-16`):
-  - `U_TERRENO_CTM12` — predios urbanos.
-  - `R_TERRENO_CTM12` — predios rurales.
-- Cada capa se reproyecta de su CRS original (MAGNA-SIRGAS CTM12, según `docs/INTEGRACION_GIS.md:35`) a `EPSG:4326` para mostrarse en el mapa web (`backend/modules/geografia.py:17,51`), y la geometría se simplifica (tolerancia `0.00001`) para reducir el peso de la respuesta (`backend/modules/geografia.py:52`).
-- El resultado se cachea en memoria con `@lru_cache(maxsize=1)` (`backend/modules/geografia.py:36`): **la geodatabase solo se lee una vez por proceso**. Si reemplazas el archivo `.gdb` en disco, debes reiniciar el backend para que tome efecto.
-- La unión con los datos del Excel se hace por `CODIGO` (campo de la geodatabase) = `NUMERO_PREDIAL` (campo del Excel) — ver `backend/modules/geografia.py:145-151`. Esta unión **no tiene cobertura del 100%**: para el dataset de Betéitiva hay predios sin geometría y geometrías sin registro (detalle exacto en `docs/INTEGRACION_GIS.md:56-62`).
+### Geodatabase
 
-`Beteitiva_plantilla.xlsx` no la lee el backend directamente: se carga desde el navegador (pantalla de "Cargar Base de Cálculo"), se parsea ahí mismo y se envía como JSON a `POST /store-data`. Sirve como plantilla de referencia/demo para probar la aplicación sin tener que construir un Excel desde cero (ver `INSTALLATION.md`, sección 4).
+La aplicación requiere una geodatabase en formato Esri File Geodatabase (`.gdb`) que contenga la información espacial de los predios.
 
-## Formato esperado del Excel
+La geodatabase debe incluir las siguientes capas:
 
-El Excel debe tener estas hojas, con estas columnas exactas (`frontend_source/config/settings.ts:42-124`):
+* `U_TERRENO_CTM12` (predios urbanos)
+* `R_TERRENO_CTM12` (predios rurales)
 
-| Hoja | Columnas |
-|---|---|
-| `base_catastral_0` | `NUMERO_PREDIAL`, `NUMERO_ORDEN`, `DESTINACION_ECONOMICA`, `AREA_TERRENO`, `AREA_CONSTRUIDA`, `AVALUO` |
-| `base_catastral_1` | mismas columnas que `base_catastral_0` |
-| `base_liquidacion_0` | `NUMERO_PREDIAL`, `TARIFA`, `ESTRATO`, `VALOR_LIQUIDADO`, `PAGO` |
-| `base_liquidacion_1` | mismas columnas que `base_liquidacion_0` |
-| `destinacion_economica` | equivalencias de código de destino (sin columnas fijas validadas en el frontend) |
+Además, ambas capas deben contener un campo denominado:
 
-Los sufijos `_0` / `_1` corresponden a Año 1 / Año 2 respectivamente. Si solo se diligencian las hojas `_0`, la aplicación solo habilita el módulo de Año 1.
+```text
+CODIGO
+```
 
-## Cómo usar otra geodatabase / otro municipio
+Este campo se utiliza para relacionar las geometrías con la información cargada desde el archivo Excel.
 
-1. Reemplaza (o agrega junto a esta) tu propio archivo `*.gdb`, asegurándote de que tenga las capas `U_TERRENO_CTM12` y `R_TERRENO_CTM12` con un campo `CODIGO` que coincida con `NUMERO_PREDIAL` del Excel que vayas a cargar.
-2. Si quieres mantener varias geodatabases en esta carpeta sin ambigüedad, usa la variable de entorno `GEODATA_GDB_PATH` para apuntar a la exacta (ver `.env.example` en la raíz del repo).
-3. Reinicia el backend (la geodatabase se cachea en memoria, ver arriba).
+### Plantilla Excel
 
-## ⚠️ Antes de subir esta carpeta a un repositorio público
+La plantilla Excel contiene la información catastral y tributaria utilizada durante las simulaciones.
 
-Estos archivos contienen **datos catastrales reales** (avalúos, tarifas, estratos y geometría predial) de un municipio real. Esta auditoría **no pudo confirmar** desde el código si son datos públicos/abiertos según la normativa catastral colombiana. No se asume que sea seguro publicarlos — es una decisión que debe tomar alguien con autoridad sobre esos datos (ver `README.md` de la raíz, secciones "Información sensible" y "Checklist antes de publicar en GitHub").
+La aplicación espera las siguientes hojas:
 
-Adicionalmente:
-- La geodatabase puede contener archivos de bloqueo temporal (`*.lock`, `*.sr.lock`) generados por software de escritorio tipo ArcGIS al abrirla. Ya están excluidos vía `.gitignore` en la raíz del repositorio — no deben versionarse.
-- Por su tamaño (~54 MB), si decides publicarla, evalúa usar Git LFS en vez de un commit normal.
+| Hoja                    | Descripción                                          |
+| ----------------------- | ---------------------------------------------------- |
+| `base_catastral_0`      | Información catastral para Año 1                     |
+| `base_catastral_1`      | Información catastral para Año 2                     |
+| `base_liquidacion_0`    | Información de liquidación para Año 1                |
+| `base_liquidacion_1`    | Información de liquidación para Año 2                |
+| `destinacion_economica` | Equivalencias y clasificación de destinos económicos |
+
+Las hojas catastrales deben incluir, como mínimo:
+
+```text
+NUMERO_PREDIAL
+NUMERO_ORDEN
+DESTINACION_ECONOMICA
+AREA_TERRENO
+AREA_CONSTRUIDA
+AVALÚO
+```
+
+Las hojas de liquidación deben incluir:
+
+```text
+NUMERO_PREDIAL
+TARIFA
+ESTRATO
+VALOR_LIQUIDADO
+PAGO
+```
+
+## Cómo utiliza estos archivos la aplicación
+
+Durante la ejecución:
+
+1. El usuario carga una plantilla Excel desde la interfaz web.
+2. El backend utiliza la geodatabase disponible para obtener las geometrías de los predios.
+3. La información del Excel se relaciona con la información espacial mediante el identificador predial.
+4. Se genera un GeoJSON que posteriormente es utilizado para construir los mapas interactivos.
+
+La geodatabase se carga una sola vez por proceso y permanece en memoria para mejorar el rendimiento. Si se reemplaza el archivo `.gdb`, es necesario reiniciar el backend para que los cambios sean reconocidos.
+
+## Utilizar otra geodatabase
+
+Para trabajar con otro municipio o conjunto de datos:
+
+1. Copia la geodatabase correspondiente dentro de esta carpeta.
+2. Verifica que existan las capas requeridas.
+3. Verifica que el campo `CODIGO` sea compatible con el campo `NUMERO_PREDIAL` de la plantilla Excel.
+4. Reinicia el backend.
+
+Opcionalmente, puede configurarse una geodatabase específica mediante las variables de entorno documentadas en el archivo `.env.example`.
+
+## Importante
+
+Los datos geográficos y las plantillas de trabajo no forman parte del repositorio.
+
+Por razones de tamaño, gestión documental y manejo de información institucional, los archivos utilizados durante el desarrollo fueron excluidos del control de versiones.
+
+Si necesitas ejecutar la aplicación, solicita los datos correspondientes al administrador del proyecto o a la entidad responsable de la información.
