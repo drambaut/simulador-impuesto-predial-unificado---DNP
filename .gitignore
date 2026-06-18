@@ -1,0 +1,68 @@
+# --- Python / backend ---
+__pycache__/
+*.py[cod]
+*$py.class
+backend/__pycache__/
+backend/modules/__pycache__/
+backend/utils/__pycache__/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# --- Entornos y secretos ---
+.env
+.env.local
+.env.*.local
+
+# Credenciales reales de usuarios (ver backend/users.json.example para la plantilla)
+backend/users.json
+
+# --- IDEs ---
+.idea/
+.fleet/
+.vscode/
+
+# --- Node (solo aplica si en algún momento se reconstruye frontend_source/) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+build/
+dist/
+
+# --- Logs ---
+*.log
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+
+# --- Volcados de Docker / artefactos de rescate (NO deben publicarse) ---
+rescate_ipu/
+*.tar
+*.tar.gz
+
+# --- Geodatabase: archivos de bloqueo temporal de ArcGIS/Esri ---
+datos_geograficos/**/*.lock
+datos_geograficos/**/*.sr.lock
+
+# --- Git anidado accidental detectado en auditoría (ver README.md, sección 14) ---
+backend/.git/
+
+
+# Datos geográficos reales
+datos_geograficos/*
+!datos_geograficos/.gitkeep
+!datos_geograficos/README.md
+
+# Python cache
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+htmlcov/

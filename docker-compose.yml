@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: dockerfile
+    ports: ["5000:5000"]
+    environment:
+      GEODATA_DIR: /app/datos_geograficos
+    volumes:
+      - ./datos_geograficos:/app/datos_geograficos:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  frontend:
+    image: httpd:2.4
+    ports: ["3000:80"]
+    command:
+      - /bin/sh
+      - -c
+      - sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /usr/local/apache2/conf/httpd.conf && sed -i 's/AllowOverride None/AllowOverride All/g' /usr/local/apache2/conf/httpd.conf && httpd-foreground
+    volumes:
+      - ./frontend:/usr/local/apache2/htdocs/:ro
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /usr/local/apache2/htdocs/index.html || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+networks:
+  default: { driver: bridge }
