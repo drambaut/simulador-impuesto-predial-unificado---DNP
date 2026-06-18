@@ -1,0 +1,35 @@
+# Dependencias depuradas en auditoría: se eliminaron paquetes de un entorno
+# interactivo (Jupyter/IPython/matplotlib/Pillow) que no se importan en ningún
+# módulo de backend/ (verificado con grep sobre app.py, modules/*.py, utils/*.py),
+# y la línea inválida "v==1" que no corresponde a ningún paquete real.
+# Se conservaron las versiones ya fijadas en el archivo original para los
+# paquetes que sí se usan; no se inventó ninguna versión nueva.
+
+# --- Importados directamente por el código de la aplicación ---
+Flask==3.0.3
+flask-cors==5.0.0
+geopandas==1.0.1
+numpy==2.1.2
+openpyxl==3.1.5
+pandas==2.2.3
+PyJWT==2.9.0
+
+# --- Requeridas para que GeoPandas pueda leer la geodatabase (.gdb) ---
+pyogrio==0.10.0
+
+# --- Servidor WSGI usado en producción (backend/dockerfile) ---
+gunicorn==23.0.0
+
+# --- Dependencias transitivas de Flask / pandas / openpyxl ya fijadas
+#     explícitamente en el archivo original; se mantienen por consistencia ---
+Werkzeug==3.0.4
+Jinja2==3.1.4
+MarkupSafe==3.0.2
+itsdangerous==2.2.0
+click==8.1.7
+blinker==1.8.2
+et-xmlfile==1.1.0
+python-dateutil==2.9.0.post0
+pytz==2024.2
+tzdata==2024.2
+six==1.16.0
