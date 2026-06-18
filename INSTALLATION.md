@@ -1,196 +1,259 @@
-# Guía de instalación — IPU Simulador
+# Guía de Instalación - IPU Simulador
 
-Esta guía asume que **nunca has visto el proyecto**. Sigue los pasos en orden. Cada paso indica cómo verificar que funcionó antes de continuar.
+Esta guía describe los pasos necesarios para ejecutar la aplicación en un entorno local.
 
-## 0. Antes de empezar
+## Requisitos
 
-Verifica que tienes:
+La forma recomendada de ejecutar el proyecto es mediante Docker.
 
-- Git.
-- **Opción A (recomendada): Docker + Docker Compose.**
-- **Opción B (sin Docker): Python 3.11** y algún servidor de archivos estáticos (puede ser tan simple como `python -m http.server`).
+### Opción recomendada
 
-No necesitas Node.js/npm para ejecutar la aplicación tal como está en el repositorio: el frontend en `frontend/` ya viene **compilado**. Node.js solo sería necesario si quisieras reconstruir el frontend desde `frontend_source/`, y eso **no es posible hoy** porque ese código fuente está incompleto (falta `package.json`, ver `docs/INTEGRACION_GIS.md:7`).
+* Docker
+* Docker Compose
 
-## 1. Clonar el repositorio
+### Opción alternativa
+
+* Python 3.11
+* Entorno virtual de Python
+
+## Obtener el proyecto
+
+Clona el repositorio y ubícate en la carpeta raíz:
 
 ```bash
 git clone <url-del-repositorio>
-cd <carpeta-del-repositorio>
+cd <nombre-del-repositorio>
 ```
 
-## 2. Verificar los datos geográficos
+## Configuración inicial
 
-El repositorio debe incluir, dentro de `datos_geograficos/`:
+### Usuarios de acceso
 
-- Una carpeta `*.gdb` (geodatabase de Esri). En este proyecto: `15092_Betéitiva.gdb`.
-- Un archivo Excel de ejemplo: `Beteitiva_plantilla.xlsx`.
-
-```bash
-ls datos_geograficos/
-```
-
-Si esta carpeta no existe o está vacía, el backend fallará al pedir el mapa con el error `No se encontró una geodatabase .gdb en <ruta>` (`backend/modules/geografia.py:30-32`). Esta auditoría **no puede confirmar** si estos archivos deben distribuirse junto con el código o por separado (ver `README.md`, sección "Checklist"); si tu copia del repositorio no los incluye, debes obtenerlos por otro medio antes de continuar.
-
-## 3A. Instalación con Docker (recomendada)
-
-### 3A.0. Configurar autenticación (obligatorio)
-
-El `dockerfile` del backend hace `COPY . .` (`backend/dockerfile:15`), así que `users.json` debe existir **antes** de construir la imagen:
+Crea el archivo de usuarios a partir de la plantilla incluida:
 
 ```bash
 cp backend/users.json.example backend/users.json
-# Edita backend/users.json con las credenciales reales.
 ```
 
-Si quieres definir una `SECRET_KEY` propia para el contenedor, agrégala como variable de entorno del servicio `backend` en `docker-compose.yml` (hoy no está definida ahí; sin ella se usa el valor por defecto heredado, ver sección 9 de `README.md`).
+Luego edita el archivo y configura las credenciales que utilizarás para acceder a la aplicación.
 
-### 3A.1. Construir y levantar los servicios
+### Clave de autenticación
 
-Desde la raíz del repositorio (donde está `docker-compose.yml`):
+Opcionalmente puedes definir una clave propia para la firma de tokens JWT:
+
+```bash
+export SECRET_KEY=<tu_clave>
+```
+
+Si no se define, el sistema utilizará la configuración por defecto.
+
+## Datos geográficos
+
+Los datos geográficos no se distribuyen junto con el código fuente.
+
+Antes de iniciar la aplicación debes ubicar una geodatabase compatible dentro de la carpeta:
+
+```text
+datos_geograficos/
+```
+
+La aplicación detectará automáticamente la geodatabase disponible y la utilizará para construir las visualizaciones geográficas.
+
+## Ejecución con Docker
+
+Desde la raíz del proyecto:
 
 ```bash
 docker compose up -d --build
 ```
 
-Esto:
-1. Construye la imagen del backend desde `backend/dockerfile` (Python 3.11-slim + dependencias de `backend/requirements.txt` + `gunicorn`).
-2. Levanta el backend en `http://localhost:5000`.
-3. Levanta el frontend (servido por Apache httpd) en `http://localhost:3000`, esperando a que el backend pase su *healthcheck* (`docker-compose.yml:28-30`).
+El proceso construirá las imágenes necesarias y levantará los servicios del sistema.
 
-### 3A.2. Verificar que todo levantó bien
+### Verificar el estado de los servicios
 
 ```bash
 docker compose ps
 ```
 
-Ambos servicios deben mostrar estado `healthy` (puede tardar hasta ~30s por el intervalo del healthcheck).
+### Verificar el backend
 
 ```bash
 curl -i http://localhost:5000/healthz
 ```
 
-Debe responder `HTTP/1.1 204 NO CONTENT` (`backend/app.py:19-21`).
+Debe responder:
 
-```bash
-curl -i http://localhost:3000/
+```text
+204 NO CONTENT
 ```
 
-Debe responder `200 OK` con el HTML de `frontend/index.html`.
+### Acceder a la aplicación
 
-### 3A.3. Ver logs si algo falla
+Frontend:
+
+```text
+http://localhost:3000
+```
+
+Backend:
+
+```text
+http://localhost:5000
+```
+
+### Ver logs
+
+Backend:
 
 ```bash
 docker compose logs backend
+```
+
+Frontend:
+
+```bash
 docker compose logs frontend
 ```
 
-### 3A.4. Detener
+### Detener los servicios
 
 ```bash
 docker compose down
 ```
 
-## 3B. Instalación sin Docker
+## Ejecución sin Docker
 
-### 3B.0. Configurar autenticación (obligatorio desde el refactor de credenciales)
-
-El backend ya **no** trae usuarios hardcodeados en el código. Antes de arrancarlo:
+### Crear entorno virtual
 
 ```bash
 cd backend
-cp users.json.example users.json
-# Edita users.json con las credenciales reales que vayas a usar.
-```
 
-Si `backend/users.json` no existe, el backend falla al arrancar con un error explícito (`backend/app.py:1013-1018`) indicando este mismo paso.
-
-Opcionalmente, define una `SECRET_KEY` propia (si no la defines, se usa un valor por defecto heredado que ya quedó expuesto en el historial del proyecto — válido para pruebas locales, no para producción):
-
-```bash
-export SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
-```
-
-### 3B.1. Backend
-
-```bash
-cd backend
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/Mac:
-source .venv/bin/activate
+```
 
+Activar el entorno:
+
+Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+Linux / MacOS:
+
+```bash
+source .venv/bin/activate
+```
+
+### Instalar dependencias
+
+```bash
 pip install -r requirements.txt
 ```
 
-> **Nota sobre `geopandas`/`pyogrio`**: estos paquetes dependen de librerías nativas (GDAL). Las versiones fijadas en `requirements.txt` (`geopandas==1.0.1`, `pyogrio==0.10.0`) se construyeron y probaron bajo Python 3.11 en Linux (imagen `python:3.11-slim`, `backend/dockerfile:2`). En Windows o con otra versión de Python, la instalación de estos dos paquetes es el punto más probable de fallo; si falla, usa la opción Docker.
-
-Ejecutar el servidor:
+### Ejecutar backend
 
 ```bash
 python app.py
 ```
 
-Por defecto corre con el servidor de desarrollo de Flask en modo `debug=True`, puerto `5000` (`backend/app.py:1037-1038`). Verifica:
+El backend quedará disponible en:
 
-```bash
-curl -i http://localhost:5000/healthz
+```text
+http://localhost:5000
 ```
 
-### 3B.2. Frontend
+### Ejecutar frontend
 
-En **otra terminal**, desde la raíz del repositorio:
+En otra terminal:
 
 ```bash
 cd frontend
 python -m http.server 3000
 ```
 
-Abre `http://localhost:3000` en el navegador.
+Accede a:
 
-⚠️ Si navegas directamente a una ruta como `http://localhost:3000/dashboard` y recargas la página, obtendrás un 404, porque `python -m http.server` no hace *fallback* a `index.html` para rutas de React Router. Esto solo está resuelto para Apache (`frontend/.htaccess`). Si necesitas navegación profunda con recarga, usa un servidor estático que soporte modo SPA (por ejemplo `npx serve -s frontend`) o usa la opción Docker.
-
-## 4. Primer uso
-
-1. Abre `http://localhost:3000`.
-2. En la pantalla de login, usa una de las credenciales definidas en `backend/app.py:993-1007`, o el botón "Ingresar como Invitado" (usuario `admin` / contraseña `admin12345`, hardcodeado en `frontend_source/components/LoginPage.tsx:54`).
-
-   > ⚠️ Estas credenciales están en el código fuente en texto plano. Si vas a usar este proyecto más allá de una prueba local, cámbialas primero (ver `README.md`, sección 14-15).
-
-3. Acepta los términos de servicio (checkbox obligatorio, `frontend_source/components/LoginPage.tsx:107-124`).
-4. Diligencia los parámetros generales (coeficiente, SMMLV, UVT, inflación esperada, etc.).
-5. Carga `datos_geograficos/Beteitiva_plantilla.xlsx` como plantilla de prueba.
-6. Haz clic en "Enviar". Si todo funciona, serás redirigido al dashboard.
-7. Explora las pestañas: Avalúo Catastral (Año 1 / Año 2) y Modificación de Tarifas (Año 1 / Año 2). Cada una debería mostrar un mapa con un panel lateral de información del predio seleccionado.
-
-Si el paso 6 falla, revisa la consola del navegador y los logs del backend — la causa más común es una plantilla Excel con columnas/hojas que no coinciden con lo esperado (`frontend_source/config/settings.ts:42-124`).
-
-## 5. Variables de entorno / configuración avanzada
-
-No existe (ni existía) un archivo `.env` en este proyecto. Si necesitas apuntar el backend a una geodatabase distinta o en otra ruta, exporta antes de levantar el backend:
-
-```bash
-export GEODATA_DIR=/ruta/a/carpeta/con/gdb       # backend/modules/geografia.py:27
-# o, para apuntar a un .gdb específico sin depender del nombre de carpeta:
-export GEODATA_GDB_PATH=/ruta/exacta/archivo.gdb  # backend/modules/geografia.py:21
+```text
+http://localhost:3000
 ```
 
-Con Docker, esto ya está resuelto vía `docker-compose.yml:7-10` (monta `./datos_geograficos` y define `GEODATA_DIR`).
+## Primer uso
 
-Se incluye un archivo `.env.example` en la raíz como referencia, aunque hoy el backend no usa `python-dotenv` ni carga `.env` automáticamente — estas variables deben exportarse manualmente en el entorno o agregarse al `docker-compose.yml` si decides adoptar un flujo basado en `.env`.
+1. Inicia sesión con una de las credenciales configuradas en `backend/users.json`.
+2. Completa los parámetros generales de simulación.
+3. Carga una plantilla Excel compatible.
+4. Envía la información para generar el conjunto de datos.
+5. Explora los módulos de:
 
-## 6. Desinstalar / limpiar
+   * Avalúo Catastral Año 1
+   * Avalúo Catastral Año 2
+   * Modificación de Tarifas Año 1
+   * Modificación de Tarifas Año 2
+6. Utiliza los mapas para analizar el impacto de los escenarios generados.
+
+## Variables de configuración
+
+La aplicación admite las siguientes variables de entorno:
+
+| Variable         | Descripción                                 |
+| ---------------- | ------------------------------------------- |
+| SECRET_KEY       | Clave utilizada para la firma de tokens JWT |
+| USERS_FILE       | Ruta al archivo de usuarios                 |
+| GEODATA_DIR      | Directorio que contiene la geodatabase      |
+| GEODATA_GDB_PATH | Ruta directa a una geodatabase específica   |
+
+### Ejemplo
 
 ```bash
-docker compose down -v       # detiene y elimina contenedores (sin -v no borra volúmenes, aquí no hay volúmenes nombrados)
-rm -rf backend/.venv backend/__pycache__ backend/modules/__pycache__ backend/utils/__pycache__
+export GEODATA_DIR=/ruta/a/datos_geograficos
 ```
 
-## 7. Problemas comunes durante la instalación
+o
 
-Ver la tabla "Solución de problemas frecuentes" en [README.md](./README.md). Específicamente para instalación:
+```bash
+export GEODATA_GDB_PATH=/ruta/a/municipio.gdb
+```
 
-- **`ModuleNotFoundError` al instalar dependencias geoespaciales**: usa Docker en vez de instalación local en Windows/Mac.
-- **El backend arranca pero `/geo/predios` da 500 o `FileNotFoundError`**: revisa que `datos_geograficos/` tenga un `.gdb` válido y que la variable `GEODATA_DIR` (si la defines) apunte a la carpeta correcta, no al archivo `.gdb` directamente.
-- **El login no funciona con ninguna credencial conocida**: revisa que el frontend esté apuntando al backend correcto. El bundle de producción de React tiene horneada la URL `http://localhost:5000`; si tu backend corre en otro host/puerto, el login fallará silenciosamente porque las llamadas van a la URL equivocada.
+## Solución de problemas
+
+### El backend no encuentra la geodatabase
+
+Verifica que exista una geodatabase válida dentro de la carpeta configurada en `datos_geograficos`.
+
+### Error instalando dependencias geográficas
+
+Las librerías geoespaciales pueden presentar dificultades de instalación en algunos sistemas operativos. En estos casos se recomienda utilizar la ejecución mediante Docker.
+
+### El mapa no muestra información
+
+Verifica que:
+
+* Los datos hayan sido cargados correctamente.
+* Exista una geodatabase compatible.
+* El backend esté respondiendo correctamente.
+* El navegador no esté utilizando archivos en caché.
+
+### No es posible iniciar sesión
+
+Verifica que:
+
+* El archivo `backend/users.json` exista.
+* Las credenciales configuradas sean correctas.
+* El frontend esté apuntando al backend correcto.
+
+## Limpieza del entorno
+
+Si utilizas Docker:
+
+```bash
+docker compose down
+```
+
+Si utilizas entorno virtual:
+
+```bash
+rm -rf backend/.venv
+```
+
+y elimina los directorios temporales generados durante la ejecución.
