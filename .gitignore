@@ -56,6 +56,9 @@ datos_geograficos/*
 !datos_geograficos/.gitkeep
 !datos_geograficos/README.md
 
+# Geodatabases cargadas manualmente por el usuario vía /geo/upload
+backend/uploads/
+
 # Python cache
 .pytest_cache/
 .mypy_cache/

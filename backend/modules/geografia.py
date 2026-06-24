@@ -1,41 +1,77 @@
 import math
-import os
+import zipfile
 from functools import lru_cache
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+import pyogrio
 
 
-GDB_ENV_VAR = "GEODATA_GDB_PATH"
-GEODATA_DIR_ENV_VAR = "GEODATA_DIR"
-DEFAULT_GEODATA_DIR = Path(__file__).resolve().parents[2] / "datos_geograficos"
 TERRENO_LAYERS = (
     ("U_TERRENO_CTM12", "urbano"),
     ("R_TERRENO_CTM12", "rural"),
 )
+REQUIRED_LAYER_NAMES = tuple(layer_name for layer_name, _ in TERRENO_LAYERS)
 WEB_CRS = "EPSG:4326"
 
 
-def _resolve_gdb_path() -> Path:
-    configured = os.environ.get(GDB_ENV_VAR)
-    if configured:
-        path = Path(configured)
-        if path.exists():
-            return path
+class GeodatabaseValidationError(ValueError):
+    """Raised when an uploaded .gdb does not meet the expected structure."""
 
-    geodata_dir = Path(os.environ.get(GEODATA_DIR_ENV_VAR, DEFAULT_GEODATA_DIR))
-    matches = sorted(geodata_dir.glob("*.gdb"))
-    if not matches:
-        raise FileNotFoundError(
-            f"No se encontro una geodatabase .gdb en {geodata_dir}"
+
+def validate_geodatabase(gdb_path) -> None:
+    """Valida que la .gdb tenga las capas requeridas y la columna CODIGO."""
+    gdb_path = Path(gdb_path)
+    try:
+        layers = pyogrio.list_layers(str(gdb_path))
+    except Exception as exc:
+        raise GeodatabaseValidationError(
+            f"No fue posible leer la geodatabase: {exc}"
+        ) from exc
+
+    available_layer_names = {row[0] for row in layers}
+    missing_layers = [
+        layer_name
+        for layer_name in REQUIRED_LAYER_NAMES
+        if layer_name not in available_layer_names
+    ]
+    if missing_layers:
+        raise GeodatabaseValidationError(
+            f"Faltan las siguientes capas en la geodatabase: {', '.join(missing_layers)}"
         )
-    return matches[0]
+
+    for layer_name in REQUIRED_LAYER_NAMES:
+        info = pyogrio.read_info(str(gdb_path), layer=layer_name)
+        if "CODIGO" not in info["fields"]:
+            raise GeodatabaseValidationError(
+                f"La capa {layer_name} no tiene la columna CODIGO"
+            )
 
 
-@lru_cache(maxsize=1)
-def load_terrain_geometries() -> gpd.GeoDataFrame:
-    gdb_path = _resolve_gdb_path()
+def extract_gdb_from_zip(zip_path, extract_dir) -> Path:
+    """Descomprime un ZIP y devuelve la ruta a la carpeta .gdb que contiene."""
+    extract_dir = Path(extract_dir)
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            archive.extractall(extract_dir)
+    except zipfile.BadZipFile as exc:
+        raise GeodatabaseValidationError(
+            "El archivo ZIP no es valido o esta corrupto"
+        ) from exc
+
+    gdb_dirs = sorted(p for p in extract_dir.rglob("*.gdb") if p.is_dir())
+    if not gdb_dirs:
+        raise GeodatabaseValidationError(
+            "El ZIP no contiene una carpeta .gdb"
+        )
+    return gdb_dirs[0]
+
+
+@lru_cache(maxsize=8)
+def load_terrain_geometries(gdb_path: str) -> gpd.GeoDataFrame:
     frames = []
 
     for layer_name, zone_name in TERRENO_LAYERS:
@@ -151,8 +187,11 @@ def _prepare_attributes(records, context=None):
     return df[existing_columns]
 
 
-def build_predios_geojson(records, context=None):
-    terrain = load_terrain_geometries()
+def build_predios_geojson(records, gdb_path, context=None):
+    if not gdb_path:
+        raise ValueError("gdb_path es requerido para construir el GeoJSON de predios")
+
+    terrain = load_terrain_geometries(str(gdb_path))
     attributes = _prepare_attributes(records, context=context)
 
     merged = terrain.merge(

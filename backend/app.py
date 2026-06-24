@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS  # Import CORS
 from modules import procesamiento, agregados, geografia
 from decimal import Decimal
+from pathlib import Path
 import pandas as pd
 import datetime
 import jwt
@@ -9,6 +10,8 @@ import uuid
 import numpy as np
 import json
 import os
+import shutil
+from werkzeug.utils import secure_filename
 
 
 app = Flask(__name__)
@@ -17,6 +20,8 @@ CORS(app)  # Enable CORS for all routes
 
 # In-memory storage for our data
 data_store = {}
+
+GEODATA_UPLOAD_ROOT = Path(__file__).resolve().parent / "uploads" / "geodata"
 
 @app.route("/healthz", methods=["GET"])
 def healthz():
@@ -375,6 +380,52 @@ GEO_CONTEXT_TO_STORE_KEY = {
     "tarifa_year2": "proyeccion_actualizada_p",
 }
 
+NO_MAP_MESSAGE = "No se puede mostrar el mapa porque no se cargó una base de datos geográfica."
+
+
+@app.route('/geo/upload', methods=['POST'])
+def upload_geodata():
+    try:
+        data_id = request.form.get('dataId')
+        if not data_id:
+            return jsonify({"error": "dataId es requerido"}), 400
+        if data_id not in data_store:
+            return jsonify({"error": "Data ID not found"}), 404
+
+        uploaded_file = (
+            request.files.get('geodata')
+            or request.files.get('file')
+            or request.files.get('zip')
+        )
+        if not uploaded_file or not uploaded_file.filename:
+            return jsonify({"error": "Se requiere un archivo ZIP con la geodatabase"}), 400
+        if not uploaded_file.filename.lower().endswith('.zip'):
+            return jsonify({"error": "El archivo debe tener extensión .zip"}), 400
+
+        upload_dir = GEODATA_UPLOAD_ROOT / data_id
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        zip_path = upload_dir / secure_filename(uploaded_file.filename)
+        uploaded_file.save(zip_path)
+
+        gdb_path = geografia.extract_gdb_from_zip(zip_path, upload_dir / "extracted")
+        geografia.validate_geodatabase(gdb_path)
+
+        data_store[data_id]["geodata_gdb_path"] = str(gdb_path)
+
+        return jsonify({
+            "message": "Geodatabase cargada y validada correctamente",
+            "dataId": data_id,
+            "gdb": gdb_path.name,
+        }), 200
+
+    except geografia.GeodatabaseValidationError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 
 @app.route('/geo/predios', methods=['GET'])
 def retrieve_predios_geojson():
@@ -393,6 +444,15 @@ def retrieve_predios_geojson():
             return jsonify({"error": "Data ID not found"}), 404
 
         data = data_store[data_id]
+        gdb_path = data.get("geodata_gdb_path")
+        if not gdb_path or not Path(gdb_path).exists():
+            return jsonify({
+                "type": "FeatureCollection",
+                "map_available": False,
+                "message": NO_MAP_MESSAGE,
+                "features": [],
+            }), 200
+
         if context == "tarifa_year1" and data.get("tariff_scenario_year1"):
             records = data["tariff_scenario_year1"]
         elif context == "tarifa_year2" and data.get("tariff_scenario_year2"):
@@ -406,9 +466,10 @@ def retrieve_predios_geojson():
                 "error": f"No hay datos disponibles para el contexto {context}"
             }), 404
 
-        geojson = geografia.build_predios_geojson(records, context=context)
+        geojson = geografia.build_predios_geojson(records, gdb_path, context=context)
         geojson["metadata"]["dataId"] = data_id
         geojson["metadata"]["context"] = context
+        geojson["map_available"] = True
         return jsonify(geojson), 200
 
     except FileNotFoundError as e:
@@ -1048,6 +1109,9 @@ def login():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # use_reloader=False: data_store vive en memoria y se pierde con cada
+    # reinicio del proceso; el autoreload de Werkzeug se disparaba con cada
+    # archivo escrito en uploads/geodata, perdiendo los datos cargados.
+    app.run(debug=True, use_reloader=False)
     #app.config.from_object('config.Config')
     #app.run(host="0.0.0.0", port=5000)

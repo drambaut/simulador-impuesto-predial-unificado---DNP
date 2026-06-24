@@ -74,8 +74,9 @@
 
   const state = {
     apiBase: resolveApiBase(),
-    dataId: localStorage.getItem("ipuDataId") || "",
+    dataId: "",
     cache: {},
+    pendingZipFile: null,
   };
 
   function rememberApiBase(url) {
@@ -97,9 +98,24 @@
 
   function rememberDataId(dataId) {
     if (!dataId) return;
+    const isNewDataset = dataId !== state.dataId;
     state.dataId = dataId;
-    localStorage.setItem("ipuDataId", dataId);
+    if (isNewDataset) {
+      resetGeoState();
+    }
+    updateUploadWidgetAvailability();
     mountAll();
+    if (isNewDataset && state.pendingZipFile) {
+      uploadPendingZipFile();
+    }
+  }
+
+  function resetGeoState() {
+    state.cache = {};
+    document.querySelectorAll("[data-geo-context]").forEach(function (panel) {
+      panel.remove();
+    });
+    resetUploadWidget();
   }
 
   function installNetworkHooks() {
@@ -326,6 +342,19 @@
     return context === TARIFA_YEAR1_CONTEXT || context === TARIFA_YEAR2_CONTEXT;
   }
 
+  function getColorizationVariableLabel(context) {
+    if (context === AVALUO_YEAR1_CONTEXT || context === AVALUO_YEAR2_CONTEXT) {
+      return "Colorizaci&oacute;n por variable: aumento absoluto del aval&uacute;o";
+    }
+    if (context === TARIFA_YEAR1_CONTEXT) {
+      return "Colorizaci&oacute;n por variable: diferencia de tarifa a&ntilde;o 1";
+    }
+    if (context === TARIFA_YEAR2_CONTEXT) {
+      return "Colorizaci&oacute;n por variable: diferencia de tarifa a&ntilde;o 2";
+    }
+    return "";
+  }
+
   function getTarifaLegendTitle(context) {
     return context === TARIFA_YEAR2_CONTEXT
       ? "Modificaci&oacute;n de tarifas A&ntilde;o 2 - escenario actual"
@@ -359,12 +388,14 @@
 
   function buildTarifaLegendHtml(hasScenario, theme, context) {
     const title = getTarifaLegendTitle(context);
+    const variableLine = "<p class=\"geo-legend__note\"><strong>" + getColorizationVariableLabel(context) + "</strong></p>";
     if (!hasScenario) {
-      return "<h4>" + title + "</h4><div class=\"geo-theme-message\">Sin escenario aplicado. Se muestra el mapa base.</div>";
+      return "<h4>" + title + "</h4>" + variableLine + "<div class=\"geo-theme-message\">Sin escenario aplicado. Se muestra el mapa base.</div>";
     }
 
     return [
       "<h4>" + title + "</h4>",
+      variableLine,
       "<p class=\"geo-legend__note\">Predios afectados por el &uacute;ltimo escenario de tarifa creado.</p>",
       "<div class=\"geo-legend__counts\">",
       "<div><span>Predios afectados</span><strong>" + formatNumber(theme.afectados) + " predios</strong></div>",
@@ -378,8 +409,9 @@
 
   function buildAvaluoLegendHtml(theme, context) {
     const config = getAvaluoContextConfig(context);
+    const variableLine = "<p class=\"geo-legend__note\"><strong>" + getColorizationVariableLabel(context) + "</strong></p>";
     if (!theme || !theme.ranges.length) {
-      return "<h4>" + config.legendTitle + "</h4><div class=\"geo-theme-message\">No se encontraron campos suficientes para calcular el cambio de aval&uacute;o. Se muestra el mapa base.</div>";
+      return "<h4>" + config.legendTitle + "</h4>" + variableLine + "<div class=\"geo-theme-message\">No se encontraron campos suficientes para calcular el cambio de aval&uacute;o. Se muestra el mapa base.</div>";
     }
 
     const message = theme.uniqueCount < 4
@@ -395,6 +427,7 @@
     ].join("");
     return [
       "<h4>" + config.legendTitle + "</h4>",
+      variableLine,
       "<p class=\"geo-legend__note\">" + config.legendSubtitle + "</p>",
       message,
       counts,
@@ -559,11 +592,39 @@
     }).join("");
   }
 
+  function renderNoMapState(panel, message) {
+    const map = panel.querySelector(".geo-map");
+    const meta = panel.querySelector(".geo-panel__meta");
+    const attributesContainer = panel.querySelector(".geo-sidebar__attributes");
+    const legend = panel.querySelector(".geo-legend");
+    const summary = panel.querySelector(".geo-scenario-summary");
+
+    map.innerHTML = "<div class=\"geo-no-map\">" + (message || "No se puede mostrar el mapa porque no se cargó una base de datos geográfica.") + "</div>";
+    if (meta) meta.textContent = "";
+    if (legend) {
+      legend.hidden = true;
+      legend.innerHTML = "";
+    }
+    if (summary) {
+      summary.hidden = true;
+      summary.innerHTML = "";
+    }
+    if (attributesContainer) {
+      attributesContainer.innerHTML = "<h4>Predio seleccionado</h4><p class=\"geo-empty\">Seleccione un polígono para consultar sus atributos.</p>";
+    }
+  }
+
   function renderMap(panel, payload, context) {
     const map = panel.querySelector(".geo-map");
     const sidebar = panel.querySelector(".geo-sidebar");
     const attributesContainer = panel.querySelector(".geo-sidebar__attributes") || sidebar;
     const meta = panel.querySelector(".geo-panel__meta");
+
+    if (payload.map_available === false) {
+      renderNoMapState(panel, payload.message);
+      return;
+    }
+
     const features = payload.features || [];
     const metadata = payload.metadata || {};
     const isAvaluoContext = isAvaluoThematicContext(context);
@@ -663,6 +724,129 @@
     }
   }
 
+  let uploadWidgetEl = null;
+
+  function updateUploadWidgetAvailability() {
+    if (!uploadWidgetEl) return;
+    const hint = uploadWidgetEl.querySelector(".geo-upload-widget__hint");
+    if (hint) {
+      hint.textContent = state.dataId
+        ? ""
+        : "Puede seleccionar el archivo ahora; se cargará al enviar la base de cálculo.";
+    }
+  }
+
+  function resetUploadWidget() {
+    if (!uploadWidgetEl) return;
+    const input = uploadWidgetEl.querySelector("input[type='file']");
+    if (input) input.value = "";
+    setUploadStatus("");
+    updateUploadWidgetAvailability();
+  }
+
+  function setUploadStatus(message, kind) {
+    if (!uploadWidgetEl) return;
+    const status = uploadWidgetEl.querySelector(".geo-upload-widget__status");
+    if (!status) return;
+    status.textContent = message || "";
+    status.className = "geo-upload-widget__status" + (kind ? " geo-upload-widget__status--" + kind : "");
+  }
+
+  function refreshMountedPanels() {
+    document.querySelectorAll("[data-geo-context]").forEach(function (panel) {
+      loadContext(panel, panel.dataset.geoContext);
+    });
+  }
+
+  function validateZipFile(file) {
+    if (!file) {
+      setUploadStatus("Seleccione un archivo .zip antes de cargar.", "error");
+      return false;
+    }
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      setUploadStatus("El archivo debe tener extensión .zip.", "error");
+      return false;
+    }
+    return true;
+  }
+
+  async function performGeoUpload(file) {
+    const dataId = state.dataId;
+    const input = uploadWidgetEl && uploadWidgetEl.querySelector("input[type='file']");
+    if (input) input.disabled = true;
+    setUploadStatus("Cargando base geográfica...", "loading");
+
+    const formData = new FormData();
+    formData.append("dataId", dataId);
+    formData.append("geodata", file);
+
+    try {
+      const response = await fetch(state.apiBase + "/geo/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = await response.json().catch(function () {
+        return {};
+      });
+      if (!response.ok) {
+        throw new Error(payload.error || "No fue posible cargar la base geográfica.");
+      }
+      setUploadStatus("Base geográfica cargada correctamente.", "success");
+      state.cache = {};
+      refreshMountedPanels();
+    } catch (error) {
+      setUploadStatus(error.message, "error");
+    } finally {
+      if (input) input.disabled = false;
+    }
+  }
+
+  function uploadPendingZipFile() {
+    const file = state.pendingZipFile;
+    state.pendingZipFile = null;
+    if (!file || !state.dataId) return;
+    performGeoUpload(file);
+  }
+
+  function handleGeoUploadFileChange(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) {
+      state.pendingZipFile = null;
+      setUploadStatus("");
+      return;
+    }
+    if (!validateZipFile(file)) {
+      state.pendingZipFile = null;
+      return;
+    }
+    state.pendingZipFile = file;
+    setUploadStatus("");
+  }
+
+  function mountGeoUploadWidget() {
+    const container = document.querySelector(".excel-reader-container");
+    if (!container) {
+      uploadWidgetEl = null;
+      return;
+    }
+    if (uploadWidgetEl && uploadWidgetEl.isConnected && container.contains(uploadWidgetEl)) {
+      return;
+    }
+
+    const widget = document.createElement("div");
+    widget.className = "geo-upload-widget";
+    widget.innerHTML = [
+      "<h2 class=\"geo-upload-widget__title\">Cargar base geogr&aacute;fica (opcional)</h2>",
+      "<input id=\"geo-upload-widget-input\" type=\"file\" accept=\".zip\" class=\"geo-upload-widget__input\" />",
+      "<div class=\"geo-upload-widget__hint\"></div>",
+      "<div class=\"geo-upload-widget__status\"></div>",
+    ].join("");
+    widget.querySelector("input[type='file']").addEventListener("change", handleGeoUploadFileChange);
+    container.appendChild(widget);
+    uploadWidgetEl = widget;
+    updateUploadWidgetAvailability();
+  }
+
   function createPanel(config) {
     const panel = document.createElement("section");
     panel.className = "geo-panel";
@@ -694,9 +878,14 @@
     });
   }
 
+  function mountEverything() {
+    mountAll();
+    mountGeoUploadWidget();
+  }
+
   installNetworkHooks();
-  const observer = new MutationObserver(mountAll);
+  const observer = new MutationObserver(mountEverything);
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  document.addEventListener("DOMContentLoaded", mountAll);
-  mountAll();
+  document.addEventListener("DOMContentLoaded", mountEverything);
+  mountEverything();
 })();

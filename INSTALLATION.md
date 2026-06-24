@@ -49,15 +49,13 @@ Si no se define, el sistema utilizará la configuración por defecto.
 
 ## Datos geográficos
 
-Los datos geográficos no se distribuyen junto con el código fuente.
+Los datos geográficos no se distribuyen junto con el código fuente y son **opcionales**.
 
-Antes de iniciar la aplicación debes ubicar una geodatabase compatible dentro de la carpeta:
+La aplicación ya no busca ninguna geodatabase interna ni carpeta local (`datos_geograficos/` no se utiliza). La base geográfica `.gdb` se carga manualmente desde la interfaz, comprimida en un archivo `.zip`:
 
-```text
-datos_geograficos/
-```
-
-La aplicación detectará automáticamente la geodatabase disponible y la utilizará para construir las visualizaciones geográficas.
+1. Carga la plantilla Excel y envíala normalmente.
+2. En el panel del mapa, usa el campo "Cargar base geográfica (opcional)" para subir un `.zip` que contenga la carpeta `.gdb` (con las capas `U_TERRENO_CTM12` y `R_TERRENO_CTM12`, cada una con la columna `CODIGO`).
+3. Si no cargas ningún `.zip`, los resultados y cálculos funcionan igual; el mapa simplemente mostrará un mensaje indicando que no hay base geográfica cargada.
 
 ## Ejecución con Docker
 
@@ -200,26 +198,10 @@ La aplicación admite las siguientes variables de entorno:
 | ---------------- | ------------------------------------------- |
 | SECRET_KEY       | Clave utilizada para la firma de tokens JWT |
 | USERS_FILE       | Ruta al archivo de usuarios                 |
-| GEODATA_DIR      | Directorio que contiene la geodatabase      |
-| GEODATA_GDB_PATH | Ruta directa a una geodatabase específica   |
 
-### Ejemplo
-
-```bash
-export GEODATA_DIR=/ruta/a/datos_geograficos
-```
-
-o
-
-```bash
-export GEODATA_GDB_PATH=/ruta/a/municipio.gdb
-```
+La geodatabase ya no se configura mediante variables de entorno: se carga manualmente desde la interfaz (ver sección "Datos geográficos").
 
 ## Solución de problemas
-
-### El backend no encuentra la geodatabase
-
-Verifica que exista una geodatabase válida dentro de la carpeta configurada en `datos_geograficos`.
 
 ### Error instalando dependencias geográficas
 
@@ -227,10 +209,10 @@ Las librerías geoespaciales pueden presentar dificultades de instalación en al
 
 ### El mapa no muestra información
 
-Verifica que:
+Esto es esperado si no has cargado un `.zip` con la geodatabase: el mapa mostrará el mensaje "No se puede mostrar el mapa porque no se cargó una base de datos geográfica.". Si cargaste un `.zip` y aun así no ves el mapa, verifica que:
 
-* Los datos hayan sido cargados correctamente.
-* Exista una geodatabase compatible.
+* El `.zip` contenga una carpeta `.gdb` con las capas `U_TERRENO_CTM12` y `R_TERRENO_CTM12`, cada una con la columna `CODIGO`.
+* La carga a `/geo/upload` haya respondido con éxito (revisa la pestaña Network del navegador).
 * El backend esté respondiendo correctamente.
 * El navegador no esté utilizando archivos en caché.
 
